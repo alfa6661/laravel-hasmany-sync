@@ -4,6 +4,7 @@ namespace Alfa6661\EloquentHasManySync;
 
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\ServiceProvider as BaseServiceProvider;
+use Illuminate\Support\Arr;
 
 class ServiceProvider extends BaseServiceProvider
 {
@@ -14,9 +15,9 @@ class ServiceProvider extends BaseServiceProvider
      */
     public function boot()
     {
-        HasMany::macro('sync', function (array $data, $deleting = true) {
+        HasMany::macro('sync', function (array $data, $deleting = true, $softDelete = true, $touchParent = true) {
             $changes = [
-                'created' => [], 'deleted' => [], 'updated' => [],
+                'created' => [], 'deleted' => [], 'updated' => [], 'update_failed' => [],
             ];
 
             /** @var HasMany $this */
@@ -45,23 +46,30 @@ class ServiceProvider extends BaseServiceProvider
 
             // Get any non-matching rows.
             $deletedKeys = array_diff($current, $castKeys(
-                array_pluck($data, $relatedKeyName))
+                Arr::pluck($data, $relatedKeyName))
             );
 
             if ($deleting && count($deletedKeys) > 0) {
-                $this->getRelated()->destroy($deletedKeys);
+                if ($softDelete) {
+                    // if the model has soft delete, soft delete it
+                    // otherwise, performed as same as the destroy function.
+                    $this->getRelated()->delete($deletedKeys);
+                } else {
+                    $this->getRelated()->destroy($deletedKeys);
+                }
                 $changes['deleted'] = $deletedKeys;
             }
 
             // Separate the submitted data into "update" and "new"
             // We determine "newRows" as those whose $relatedKeyName (usually 'id') is null.
-            $newRows = array_where($data, function ($row) use ($relatedKeyName) {
-                return array_get($row, $relatedKeyName) === null;
+            // sometime front end pass a row with a negative id to indicate a new row
+            $newRows = Arr::where($data, function ($row) use ($relatedKeyName) {
+                return Arr::get($row, $relatedKeyName) === null || Arr::get($row, $relatedKeyName) < 0;
             });
 
             // We determine "updateRows" as those whose $relatedKeyName (usually 'id') is set, not null.
-            $updatedRows = array_where($data, function ($row) use ($relatedKeyName) {
-                return array_get($row, $relatedKeyName) !== null;
+            $updatedRows = Arr::where($data, function ($row) use ($relatedKeyName) {
+                return Arr::get($row, $relatedKeyName) !== null && Arr::get($row, $relatedKeyName) > 0;
             });
 
             if (count($newRows) > 0) {
@@ -72,11 +80,19 @@ class ServiceProvider extends BaseServiceProvider
             }
 
             foreach ($updatedRows as $row) {
-                $this->getRelated()->where($relatedKeyName, $castKey(array_get($row, $relatedKeyName)))
-                    ->update($row);
+                if ($this->getRelated()->where($relatedKeyName, $castKey(Arr::get($row, $relatedKeyName)))
+                ->update($row)) {
+                    $changes['updated'][] = $castKey($row[$relatedKeyName]);
+                } else {
+                    // updating failed, probably because of giving an invalid id. 
+                    $changes['update_failed'][] = $castKey($row[$relatedKeyName]);
+                }
             }
 
-            $changes['updated'] = $castKeys(array_pluck($updatedRows, $relatedKeyName));
+            if ($touchParent) {
+                // update the timestamp of the parent
+                $this->parent->touch();
+            }
 
             return $changes;
         });
