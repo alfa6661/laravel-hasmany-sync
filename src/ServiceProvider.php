@@ -72,8 +72,11 @@ class ServiceProvider extends BaseServiceProvider
             }
 
             foreach ($updatedRows as $row) {
-                $this->getRelated()->where($relatedKeyName, $castKey(array_get($row, $relatedKeyName)))
-                    ->update($row);
+                $related = $this->getRelated()
+                    ->where($relatedKeyName, $castKey(array_get($row, $relatedKeyName)))
+                    ->first()
+                    ->fill($row)
+                    ->save();
             }
 
             $changes['updated'] = $castKeys(array_pluck($updatedRows, $relatedKeyName));
