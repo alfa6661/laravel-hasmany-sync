@@ -3,7 +3,7 @@
     "description": "Laravel has many sync",
     "type": "library",
     "require": {
-        "illuminate/support": "^6.2"
+        "illuminate/support": "^7.0"
     },
     "license": "MIT",
     "authors": [
